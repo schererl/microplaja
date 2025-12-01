@@ -20,11 +20,7 @@ class RRLPolicy:
         self.eval_mode = eval_mode
 
     def _forward(self, atoms: Dict[str, bool]):
-        if self.eval_mode == "lazy":
-            return self.model.lazy_forward(atoms)
-        if self.eval_mode == "compiled":
-            return self.model.compiled_forward(atoms)
-        raise ValueError(f"Unsupported eval_mode: {self.eval_mode}")
+        return self.model.forward(atoms)
 
     def act(self, state: Dict[str, Any], applicable: List[str]) -> str:
         atoms = self.adapter.encode(state)

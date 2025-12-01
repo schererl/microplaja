@@ -78,7 +78,7 @@ pip install --index-url https://download.pytorch.org/whl/cu121 torch
 Entry point: `runner.py`
 
 ```bash
-python3 runner.py   --jani PATH/your_env.jani   --property PATH/your_prop.jani   --interface PATH/your_interface.jani2nnet   --policy rrl   --sym_model PATH/sym_model.json   --episodes 10   --max_steps 200
+python3 runner.py --jani PATH/your_env.jani --property PATH/your_prop.jani --interface PATH/your_interface.jani2nnet --policy rrl --sym_model PATH/sym_model.json
 ```
 
 ### CLI arguments
@@ -111,7 +111,7 @@ Debug scripts live in `debug_scripts/`.
 ### 1) Compare with original RRL logits (`.npz`)
 
 ```bash
-python3 -m debug_scripts.test_sym_model   --model example/sym_model.json   --npz example/pred_dump.npz
+python3 -m debug_scripts.test_sym_model --model example/sym_model.json --npz example/pred_dump.npz
 ```
 
 This:
@@ -122,14 +122,14 @@ This:
   - `sym_acc`: accuracy of symbolic model.
   - `pred_agreement`: fraction of samples where argmax matches.
 
-If agreement is not ~100%, something is wrong with the export or microPlaJa.
+The accuracy is ~97% and agreement ~100%; if is not ~100% something is wrong with the export or microPlaJa.
+
 
 ### 2) Evaluate from `.data` + JANI + interface
 
 ```bash
-python3 -m debug_scripts.test_sym_model   --model example/sym_model.json   --df example/beluga_4_2.data   --interface example/beluga_4_2_128_128.jani2nnet   --jani example/beluga_4_2.jani   --prop example/pa_beluga_4_2_random_starts_1000.jani
+python3 -m debug_scripts.test_sym_model --model example/sym_model.json --df example/one_way_line_15_10_det.data  --interface example/one_way_line_15_10_128_128.jani2nnet --jani example/one_way_line_15_10.jani --prop example/pa_one_way_line_15_10_random_starts_1000.jani
 ```
-
 This:
 
 - Parses the `.data` file.
@@ -139,7 +139,7 @@ This:
 ### 3) Inspect compiled rules
 
 ```bash
-python3 -m debug_scripts.test_sym_model   --model example/sym_model.json   --print-rules
+python3 -m debug_scripts.test_sym_model --model example/sym_model.json --print-rules
 ```
 
 Prints the compiled Python functions for all rules (for debugging / inspection).

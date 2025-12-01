@@ -42,8 +42,6 @@ def evaluate_episode(
                 + "\n"
             )
 
-    print(f"max_steps: {max_steps}")
-
     for t in range(max_steps):
         if M.in_goal(s):
             if trace:
