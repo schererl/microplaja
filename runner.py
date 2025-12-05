@@ -15,121 +15,42 @@ class RandomPolicy:
         return random.choice(applicable)
 
 
+def pad_or_trim_trace(trace: List[List[int]], fixed_size: int,
+                      final_state: List[int]) -> List[List[int]]:
+    if len(trace) > fixed_size:
+        return trace[:fixed_size]
+    elif len(trace) < fixed_size:
+        return trace + [final_state] * (fixed_size - len(trace))
+    return trace
+
+
 def evaluate_episode(
     M: JaniEnvironment,
     pi: RandomPolicy | RRLPolicy,
     max_steps: int = 1000,
-    trace: bool = False,
-    trace_sink: Optional[Any] = None,
     episode_id: int = 0,
-) -> Tuple[str, int]:
+) -> Tuple[str, List[List[int]], int]:
     s = M._sample_init()
-
-    if trace:
-        print(f"\n=== EPISODE {episode_id} ===")
-
-        def snap(st: Dict[str, float]) -> str:
-            items = list(st.items())[:12]
-            fmt = lambda v: int(v) if float(v).is_integer() else round(float(v), 6)
-            return ", ".join(f"{k}={fmt(v)}" for k, v in items)
-
-        print(f"-1| <init>                 | {snap(s)}")
-        if trace_sink:
-            trace_sink.write(
-                json.dumps(
-                    {"episode": episode_id, "t": -1, "event": "init", "state": s}
-                )
-                + "\n"
-            )
+    trace: List[List[int]] = [[int(s_val) for s_val in s.values()]]
 
     for t in range(max_steps):
         if M.in_goal(s):
-            if trace:
-                print(f"{t:2d}| <GOAL>")
-                if trace_sink:
-                    trace_sink.write(
-                        json.dumps(
-                            {
-                                "episode": episode_id,
-                                "t": t,
-                                "event": "goal",
-                                "state": s,
-                            }
-                        )
-                        + "\n"
-                    )
-            return ("goal", t)
-
+            return "goal", trace, t  # t = number of actions taken so far
         if M.is_unsafe(s):
-            if trace:
-                print(f"{t:2d}| <UNSAFE>")
-                if trace_sink:
-                    trace_sink.write(
-                        json.dumps(
-                            {
-                                "episode": episode_id,
-                                "t": t,
-                                "event": "unsafe",
-                                "state": s,
-                            }
-                        )
-                        + "\n"
-                    )
-            return ("unsafe", t)
-
+            return "unsafe", trace, t
         applicable = M.applicable_actions(s)
         if not applicable:
-            if trace:
-                print(f"{t:2d}| <NO-APPLICABLE>")
-                if trace_sink:
-                    trace_sink.write(
-                        json.dumps(
-                            {
-                                "episode": episode_id,
-                                "t": t,
-                                "event": "noapp",
-                                "state": s,
-                            }
-                        )
-                        + "\n"
-                    )
-            return ("timeout", t)
+            # no applicable action -> we treat as timeout
+            return "timeout", trace, t
 
         a = pi.act(s, applicable)
-
         succs = M.successors(s, a)
         s2 = random.choice(succs)
-
-        if trace:
-            print(f"{t:2d}| {a}")
-            print(f"{t}| <state>  | {snap(s)}")
-            if trace_sink:
-                trace_sink.write(
-                    json.dumps(
-                        {
-                            "episode": episode_id,
-                            "t": t,
-                            "action": a,
-                            "state_before": s,
-                            "state_after": s2,
-                            "applicable": applicable,
-                        }
-                    )
-                    + "\n"
-                )
-
         s = s2
+        trace.append([float(s_val) for s_val in s.values()])
 
-    if trace:
-        print(f"{max_steps:2d}| <TIMEOUT>")
-        if trace_sink:
-            trace_sink.write(
-                json.dumps(
-                    {"episode": episode_id, "t": max_steps, "event": "timeout"}
-                )
-                + "\n"
-            )
-    return ("timeout", max_steps)
+    # never hit goal/unsafe within max_steps
+    return "timeout", trace, max_steps
 
 
 def main(
@@ -140,8 +61,7 @@ def main(
     max_steps: int = 200,
     policy_kind: str = "random",
     sym_model: Optional[str] = None,
-    trace: bool = False,
-    trace_file: Optional[str] = None,
+    fixed_tsize: int = -1,
 ):
     M = load_env(jani_file, property_file)
 
@@ -150,28 +70,56 @@ def main(
     elif policy_kind in ("rrl", "rule-based"):
         if not sym_model:
             raise ValueError("--sym_model is required when --policy rrl")
-        adapter = RRLAdapter(var_bounds=M.variables, interface_path=interface_file)
-        policy = RRLPolicy(model_path=sym_model, adapter=adapter, eval_mode="compiled")
+        adapter = RRLAdapter(var_bounds=M.variables,
+                             interface_path=interface_file)
+        policy = RRLPolicy(model_path=sym_model,
+                           adapter=adapter,
+                           eval_mode="compiled")
     else:
-        raise ValueError(f"Unknown --policy '{policy_kind}' (use 'random' or 'rrl').")
+        raise ValueError(f"Unknown --policy '{policy_kind}' "
+                         "(use 'random' or 'rrl').")
 
     stats = {"goal": 0, "unsafe": 0, "timeout": 0, "steps_sum": 0}
-    sink = open(trace_file, "w") if (trace and trace_file) else None
+
+    # Open dataset file if we want fixed-size traces
+    trace_out = None
+    if fixed_tsize != -1:
+        trace_out = open("episode_traces.jsonl", "w")
+
     try:
         for ep in range(episodes):
-            res, steps = evaluate_episode(
+            res, trace, steps = evaluate_episode(
                 M,
                 policy,
                 max_steps=max_steps,
-                trace=trace,
-                trace_sink=sink,
                 episode_id=ep,
             )
+
             stats[res] += 1
             stats["steps_sum"] += steps
+
+            if fixed_tsize != -1:
+                # last state in the (possibly shorter) trace
+                final_state = trace[-1]
+                trace_fixed = pad_or_trim_trace(trace, fixed_tsize, final_state)
+                # OUTPUT label:
+                # - GOAL if we reached goal
+                # - UNSAFE otherwise (timeout or explicit unsafe)
+                if res == "goal" or res == "timeout":
+                    output_label = "SAFE"
+                else:
+                    output_label = "UNSAFE"
+
+                row = {
+                    "#VARIABLES": len(final_state),
+                    "#TRACE": len(trace_fixed),      # should == fixed_tsize
+                    "TRACE": trace_fixed,          # list of state vectors
+                    "OUTPUT": output_label,        # "GOAL" or "UNSAFE"
+                }
+                trace_out.write(json.dumps(row) + "\n")
     finally:
-        if sink:
-            sink.close()
+        if trace_out is not None:
+            trace_out.close()
 
     avg_steps = stats["steps_sum"] / max(1, episodes)
     print(
@@ -185,9 +133,11 @@ if __name__ == "__main__":
     import argparse
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--jani", required=True, help="Path to environment .jani (JSON)")
+    ap.add_argument("--jani", required=True,
+                    help="Path to environment .jani (JSON)")
     ap.add_argument(
-        "--property", required=True, help="Path to property .jani (start/goal/failure)"
+        "--property", required=True,
+        help="Path to property .jani (start/goal/failure)",
     )
     ap.add_argument(
         "--interface",
@@ -206,9 +156,12 @@ if __name__ == "__main__":
     )
     ap.add_argument("--episodes", type=int, default=10)
     ap.add_argument("--max_steps", type=int, default=100)
-    ap.add_argument("--trace", action="store_true", help="Print per-step trace")
-    ap.add_argument("--trace-file", help="Write JSONL trace to this file")
+    ap.add_argument("--fixed_tsize", type=int, default=-1)
     args = ap.parse_args()
+
+    # If user wants fixed trace size, also bound the rollout length
+    if args.fixed_tsize != -1:
+        args.max_steps = args.fixed_tsize
 
     main(
         jani_file=args.jani,
@@ -218,6 +171,5 @@ if __name__ == "__main__":
         max_steps=args.max_steps,
         policy_kind=args.policy,
         sym_model=args.sym_model,
-        trace=args.trace,
-        trace_file=args.trace_file,
+        fixed_tsize=args.fixed_tsize,
     )
