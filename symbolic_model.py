@@ -167,16 +167,20 @@ def _build_topo_layers(rules: Dict[str, Any]) -> List[List[str]]:
 def _expr_to_py(node: Any) -> str:
     if isinstance(node, bool):
         return "True" if node else "False"
+
     if isinstance(node, str):
-        return f"A[{node!r}]"
+        # Atom if present in A, otherwise it MUST be a rule already computed in R.
+        # If it's missing from R, this raises KeyError -> signals wrong order or missing rule.
+        return f"(A[{node!r}] if {node!r} in A else R[{node!r}])"
+
     if not isinstance(node, dict):
         raise ValueError(f"Invalid expr node: {node!r}")
 
     if "ref" in node:
         ref = str(node["ref"])
         if node.get("neg"):
-            return f"(not R.get({ref!r}, False))"
-        return f"R.get({ref!r}, False)"
+            return f"(not R[{ref!r}])"
+        return f"R[{ref!r}]"
 
     if "NOT" in node:
         inner = _expr_to_py(node["NOT"])
